@@ -8,7 +8,11 @@ import {
   runOmnisKeyRuntimeTurn,
   getOmnisKeyRuntimeTelegramConfig,
   dispatchOmnisKeyRuntimeTelegramMessage,
-  pollOmnisKeyRuntimeTelegram
+  pollOmnisKeyRuntimeTelegram,
+  getVerifiedRuntimeAuthStatus,
+  loginVerifiedRuntimeMiniMaxOAuth,
+  logoutVerifiedRuntimeAuth,
+  OMNIS_KEY_RUNTIME_DEFINITION as runtimeDefinition
 } from "./index.js";
 import type { OmnisModelProviderId } from "./types.js";
 
@@ -27,6 +31,8 @@ if (command === "init") {
   const markdown = args.includes("--markdown") || firstArg === "--markdown";
   const workspaceRoot = firstArg && firstArg !== "--markdown" ? firstArg : ".";
   process.stdout.write(markdown ? renderOmnisKeyRuntimeTurnsMarkdown(resolve(workspaceRoot)) : json(readOmnisKeyRuntimeTurns(resolve(workspaceRoot))));
+} else if (command === "auth") {
+  await runAuth(firstArg, args);
 } else if (command === "ask") {
   const parsed = parseArgs([firstArg, ...args].filter((item): item is string => Boolean(item)));
   const message = parsed.positionals.join(" ").trim();
@@ -78,10 +84,45 @@ if (command === "init") {
   process.exit(1);
 }
 
+async function runAuth(subcommand: string | undefined, args: string[]): Promise<void> {
+  if (subcommand === "status" || !subcommand) {
+    process.stdout.write(json(getVerifiedRuntimeAuthStatus(runtimeDefinition)));
+    return;
+  }
+  if (subcommand === "login") {
+    const provider = args[0];
+    if (provider === "minimax") {
+      const region = args.includes("--cn") ? "cn" : "global";
+      process.stdout.write(json(await loginVerifiedRuntimeMiniMaxOAuth(runtimeDefinition, { region })));
+      return;
+    }
+    if (provider === "kimi") {
+      process.stderr.write("Kimi/Moonshot does not expose OAuth in the inspected OpenClaw build. Set OMNIS_KIMI_API_KEY, KIMI_API_KEY, or MOONSHOT_API_KEY.\n");
+      process.exit(1);
+    }
+    process.stderr.write("omniskey-runtime auth login <minimax> [--cn]\n");
+    process.exit(1);
+  }
+  if (subcommand === "logout") {
+    const provider = args[0];
+    if (!provider || provider === "minimax") {
+      process.stdout.write(json(logoutVerifiedRuntimeAuth(runtimeDefinition, { provider: "minimax" })));
+      return;
+    }
+    process.stderr.write("omniskey-runtime auth logout [minimax]\n");
+    process.exit(1);
+  }
+  process.stderr.write("omniskey-runtime auth <status|login|logout> ...\n");
+  process.exit(1);
+}
+
 function usage(): void {
   process.stderr.write([
     "omniskey-runtime init [workspace]",
     "omniskey-runtime status [workspace]",
+    "omniskey-runtime auth status",
+    "omniskey-runtime auth login minimax [--cn]",
+    "omniskey-runtime auth logout [minimax]",
     "omniskey-runtime ask <message...> [--json] [--audit] [--provider openai|kimi|minimax] [--model model]",
     "omniskey-runtime log [workspace] [--markdown]",
     "omniskey-runtime telegram-config [workspace]",

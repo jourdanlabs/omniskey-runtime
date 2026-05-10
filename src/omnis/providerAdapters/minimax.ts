@@ -16,21 +16,20 @@ export async function invokeMiniMaxChat(input: MiniMaxChatInvocation): Promise<O
   if (!key) {
     throw new Error("missing MiniMax API key");
   }
-  const endpoint = input.endpoint ?? "https://api.minimax.io/v1/chat/completions";
+  const endpoint = input.endpoint ?? "https://api.minimax.io/anthropic/v1/messages";
   const fetchImpl = input.fetchImpl ?? fetch;
   const body = {
     model: input.model,
-    messages: [
-      { role: "system", content: input.system },
-      { role: "user", content: input.user }
-    ],
+    system: input.system,
+    messages: [{ role: "user", content: input.user }],
     max_tokens: input.maxOutputTokens ?? 900
   };
   const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: {
       "authorization": `Bearer ${key}`,
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify(body)
   });
@@ -69,6 +68,16 @@ function extractOutputText(value: unknown): string {
     ? (value as Record<string, unknown>).choices as unknown[]
     : [];
   const chunks: string[] = [];
+  const content = (value as Record<string, unknown>).content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const text = (part as Record<string, unknown>).text;
+      if (typeof text === "string") {
+        chunks.push(text);
+      }
+    }
+  }
   for (const choice of choices) {
     if (!choice || typeof choice !== "object") continue;
     const message = (choice as Record<string, unknown>).message;
@@ -77,6 +86,13 @@ function extractOutputText(value: unknown): string {
     if (typeof content === "string") {
       chunks.push(content);
     }
+  }
+  if (chunks.length > 0) {
+    return chunks.join("\n").trim();
+  }
+  const outputText = (value as Record<string, unknown>).output_text;
+  if (typeof outputText === "string") {
+    return outputText;
   }
   return chunks.join("\n").trim();
 }

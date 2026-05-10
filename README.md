@@ -35,6 +35,15 @@ OMNISKEY_RUNTIME_TELEGRAM_BOT_TOKEN=
 OMNISKEY_RUNTIME_TELEGRAM_ALLOWED_CHAT_IDS=
 ```
 
+MiniMax OAuth is available for users with MiniMax subscription access:
+
+```sh
+omniskey-runtime auth login minimax
+omniskey-runtime auth status
+```
+
+Kimi/Moonshot is API-key based in the inspected OpenClaw build; no Kimi OAuth flow is claimed here.
+
 ## CLI
 
 ```sh

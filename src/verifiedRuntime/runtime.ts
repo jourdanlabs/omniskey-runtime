@@ -7,6 +7,7 @@ import { invokeOpenAIResponse } from "../omnis/providerAdapters/openai.js";
 import type { VerifiedRuntimeDefinition, VerifiedRuntimeId } from "./definition.js";
 import { runtimeEnv } from "../omnis/envBoundary.js";
 import { appendVerifiedRuntimeTurn } from "./store.js";
+import { isMiniMaxOAuthConfigured, miniMaxOAuthBearer } from "./auth.js";
 import type { VerifiedAgentModelTarget, VerifiedAgentTurnInput, VerifiedAgentTurnResult } from "./types.js";
 export type { VerifiedAgentModelTarget, VerifiedAgentTurnInput, VerifiedAgentTurnResult } from "./types.js";
 
@@ -26,12 +27,14 @@ export async function runVerifiedAgentTurn(
   const maxOutputTokens = input.maxOutputTokens ?? positiveInteger(env[`${definition.env_prefix}_MAX_OUTPUT_TOKENS`], 900);
   const maxRepairAttempts = input.maxRepairAttempts ?? positiveInteger(env[`${definition.env_prefix}_MAX_REPAIR_ATTEMPTS`], 1);
   const providerResults: OmnisModelProviderCallResult[] = [];
+  const credential = credentialForTarget(definition, target, env);
   const draft = await invokeVerifiedModel({
     target,
-    apiKey: apiKeyForTarget(target, env),
+    apiKey: credential.apiKey,
     system: definition.system_prompt,
     user: input.message,
     maxOutputTokens,
+    ...(credential.endpoint ? { endpoint: credential.endpoint } : {}),
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {})
   });
   providerResults.push(draft);
@@ -45,7 +48,7 @@ export async function runVerifiedAgentTurn(
   if (verification.blockers.length > 0 && maxRepairAttempts > 0) {
     const repair = await invokeVerifiedModel({
       target,
-      apiKey: apiKeyForTarget(target, env),
+      apiKey: credential.apiKey,
       system: definition.repair_system_prompt,
       user: buildFluidRepairPrompt({
         userMessage: input.message,
@@ -54,6 +57,7 @@ export async function runVerifiedAgentTurn(
         ...(input.context ? { context: input.context } : {})
       }),
       maxOutputTokens,
+      ...(credential.endpoint ? { endpoint: credential.endpoint } : {}),
       ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {})
     });
     providerResults.push(repair);
@@ -102,14 +106,15 @@ export function resolveVerifiedModelTarget(
   }
 ): VerifiedAgentModelTarget {
   const env = runtimeEnv(input.env);
-  const provider_id = normalizeProvider(input.providerId ?? env[`${definition.env_prefix}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? firstConfiguredProvider(env));
+  const provider_id = normalizeProvider(input.providerId ?? env[`${definition.env_prefix}_PROVIDER`] ?? env.DEFAULT_PROVIDER ?? firstConfiguredProvider(definition, env));
   const model = input.model ?? env[`${definition.env_prefix}_MODEL`] ?? defaultModel(definition, provider_id, env);
   const secret_ref = secretRef(provider_id);
+  const oauthConfigured = provider_id === "minimax" && isMiniMaxOAuthConfigured(definition, env);
   const withoutHash = {
     provider_id,
     model,
-    secret_ref,
-    configured: Boolean(env[secret_ref] || fallbackSecret(provider_id, env))
+    secret_ref: oauthConfigured && !env[secret_ref] && !fallbackSecret(provider_id, env) ? "MINIMAX_OAUTH_PROFILE" : secret_ref,
+    configured: Boolean(env[secret_ref] || fallbackSecret(provider_id, env) || oauthConfigured)
   };
   return {
     ...withoutHash,
@@ -123,6 +128,7 @@ async function invokeVerifiedModel(input: {
   system: string;
   user: string;
   maxOutputTokens: number;
+  endpoint?: string;
   fetchImpl?: typeof fetch;
 }): Promise<OmnisModelProviderCallResult> {
   if (input.target.provider_id === "kimi") {
@@ -132,6 +138,7 @@ async function invokeVerifiedModel(input: {
       system: input.system,
       user: input.user,
       maxOutputTokens: input.maxOutputTokens,
+      ...(input.endpoint ? { endpoint: input.endpoint } : {}),
       ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {})
     });
   }
@@ -163,10 +170,11 @@ function normalizeProvider(value: string): OmnisModelProviderId {
   return "openai";
 }
 
-function firstConfiguredProvider(env: Record<string, string | undefined>): OmnisModelProviderId {
+function firstConfiguredProvider(definition: VerifiedRuntimeDefinition, env: Record<string, string | undefined>): OmnisModelProviderId {
   if (env.OMNIS_OPENAI_API_KEY || env.OPENAI_API_KEY) return "openai";
   if (env.OMNIS_KIMI_API_KEY || env.KIMI_API_KEY || env.MOONSHOT_API_KEY) return "kimi";
   if (env.OMNIS_MINIMAX_API_KEY || env.MINIMAX_API_KEY) return "minimax";
+  if (isMiniMaxOAuthConfigured(definition, env)) return "minimax";
   return "openai";
 }
 
@@ -194,6 +202,30 @@ function fallbackSecret(providerId: OmnisModelProviderId, env: Record<string, st
 
 function apiKeyForTarget(target: VerifiedAgentModelTarget, env: Record<string, string | undefined>): string {
   return env[target.secret_ref] ?? fallbackSecret(target.provider_id, env);
+}
+
+function credentialForTarget(
+  definition: VerifiedRuntimeDefinition,
+  target: VerifiedAgentModelTarget,
+  env: Record<string, string | undefined>
+): {
+  apiKey: string;
+  endpoint?: string;
+} {
+  const apiKey = apiKeyForTarget(target, env);
+  if (apiKey) {
+    return { apiKey };
+  }
+  if (target.provider_id === "minimax") {
+    const oauth = miniMaxOAuthBearer(definition, env);
+    if (oauth) {
+      return {
+        apiKey: oauth.accessToken,
+        endpoint: `${oauth.baseUrl.replace(/\/+$/, "")}/v1/messages`
+      };
+    }
+  }
+  return { apiKey };
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {

@@ -5,5 +5,6 @@ export * from "./verifiedRuntime/definition.js";
 export * from "./verifiedRuntime/runtime.js";
 export * from "./verifiedRuntime/store.js";
 export * from "./verifiedRuntime/telegram.js";
+export * from "./verifiedRuntime/auth.js";
 export * from "./bifrost/fluid.js";
 export * from "./types.js";

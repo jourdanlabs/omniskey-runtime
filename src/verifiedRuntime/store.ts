@@ -4,6 +4,7 @@ import { canonicalJson } from "../audit/canonicalize.js";
 import { hashCanonical, shortHash } from "../audit/hash.js";
 import { runtimeEnv } from "../omnis/envBoundary.js";
 import { currentOmnisTimestamp } from "../omnis/paths.js";
+import { isMiniMaxOAuthConfigured } from "./auth.js";
 import type { VerifiedRuntimeDefinition, VerifiedRuntimeId } from "./definition.js";
 import type { VerifiedAgentTurnResult } from "./types.js";
 
@@ -188,6 +189,8 @@ function envExample(definition: VerifiedRuntimeDefinition): string {
     "MOONSHOT_API_KEY=",
     "OMNIS_MINIMAX_API_KEY=",
     "MINIMAX_API_KEY=",
+    "# MiniMax OAuth is also supported with:",
+    `# ${definition.cli_name} auth login minimax`,
     `${definition.env_prefix}_TELEGRAM_BOT_TOKEN=`,
     `${definition.env_prefix}_TELEGRAM_ALLOWED_CHAT_IDS=`,
     `${definition.env_prefix}_TELEGRAM_POLL_INTERVAL_MS=2500`,
@@ -201,7 +204,7 @@ function resolveStatusTarget(definition: VerifiedRuntimeDefinition, env: Record<
   configured: boolean;
   secret_ref: string;
 } {
-  const provider_id = env[`${definition.env_prefix}_PROVIDER`] ?? (env.OMNIS_OPENAI_API_KEY || env.OPENAI_API_KEY ? "openai" : env.OMNIS_KIMI_API_KEY || env.KIMI_API_KEY || env.MOONSHOT_API_KEY ? "kimi" : env.OMNIS_MINIMAX_API_KEY || env.MINIMAX_API_KEY ? "minimax" : "openai");
+  const provider_id = env[`${definition.env_prefix}_PROVIDER`] ?? (env.OMNIS_OPENAI_API_KEY || env.OPENAI_API_KEY ? "openai" : env.OMNIS_KIMI_API_KEY || env.KIMI_API_KEY || env.MOONSHOT_API_KEY ? "kimi" : env.OMNIS_MINIMAX_API_KEY || env.MINIMAX_API_KEY || isMiniMaxOAuthConfigured(definition, env) ? "minimax" : "openai");
   if (provider_id === "kimi") {
     return {
       provider_id,
@@ -211,11 +214,12 @@ function resolveStatusTarget(definition: VerifiedRuntimeDefinition, env: Record<
     };
   }
   if (provider_id === "minimax") {
+    const oauthConfigured = isMiniMaxOAuthConfigured(definition, env);
     return {
       provider_id,
       model: env[`${definition.env_prefix}_MODEL`] ?? env.MINIMAX_MODEL ?? env.OMNIS_MINIMAX_MODEL ?? definition.default_minimax_model,
-      configured: Boolean(env.OMNIS_MINIMAX_API_KEY || env.MINIMAX_API_KEY),
-      secret_ref: "OMNIS_MINIMAX_API_KEY"
+      configured: Boolean(env.OMNIS_MINIMAX_API_KEY || env.MINIMAX_API_KEY || oauthConfigured),
+      secret_ref: oauthConfigured && !env.OMNIS_MINIMAX_API_KEY && !env.MINIMAX_API_KEY ? "MINIMAX_OAUTH_PROFILE" : "OMNIS_MINIMAX_API_KEY"
     };
   }
   return {
